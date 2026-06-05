@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Юбилейный Календарь</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        .card:hover { transform: translateY(-2px); transition: all 0.2s ease-in-out; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight mb-2">🏅 Юбилейный Календарь</h1>
+            <p class="text-lg text-slate-600">Автоматический расчет круглых дат знаменитых людей.</p>
+        </header>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-8 flex flex-col md:flex-row items-end justify-between gap-4">
+            <div class="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
+                <div>
+                    <label for="yearInput" class="block text-sm font-semibold text-gray-700 mb-1">Целевой год</label>
+                    <input type="number" id="yearInput" value="2026" class="w-full sm:w-32 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-lg text-center bg-gray-50">
+                </div>
+                
+                <div class="flex-grow sm:w-64">
+                    <label for="specFilter" class="block text-sm font-semibold text-gray-700 mb-1">Направление / Специализация</label>
+                    <select id="specFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium bg-gray-50 text-ellipsis overflow-hidden">
+                        <option value="all">Все направления</option>
+                        </select>
+                </div>
+            </div>
+
+            <div id="statsCount" class="text-sm font-medium text-slate-500 bg-slate-100 px-4 py-2.5 rounded-lg w-full md:w-auto text-center md:text-left whitespace-nowrap">
+                Загрузка и обработка Excel-файла...
+            </div>
+        </div>
+
+        <div id="resultsGrid" class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            </div>
+        
+        <div id="noResults" class="hidden text-center py-12">
+            <p class="text-gray-500 text-lg">По выбранным критериям крупных юбилеев не найдено.</p>
+        </div>
+    </div>
+
+    <script>
+        const EXCEL_FILE_PATH = 'arboblar_updated.xlsx';
+        let peopleData = [];
+
+        // Автоматическая загрузка и парсинг .xlsx файла
+        async function loadExcelData() {
+            try {
+                const response = await fetch(EXCEL_FILE_PATH);
+                if (!response.ok) {
+                    throw new Error(`Не удалось найти файл ${EXCEL_FILE_PATH}. Убедись, что он лежит в одной папке с index.html`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                peopleData = XLSX.utils.sheet_to_json(worksheet);
+                
+                // Настраиваем фильтры и элементы управления
+                populateSpecDropdown();
+                
+                document.getElementById('yearInput').addEventListener('input', renderAnniversaries);
+                document.getElementById('specFilter').addEventListener('change', renderAnniversaries);
+                
+                renderAnniversaries();
+                
+            } catch (error) {
+                console.error(error);
+                document.getElementById('statsCount').innerHTML = `<span class="text-red-500 font-semibold">Ошибка: ${error.message}</span>`;
+            }
+        }
+
+        // Функция очистки текста от префикса "Направления:"
+        function cleanSpecialization(specText) {
+            if (!specText) return 'Историческая личность';
+            // Удаляем "Направления:", "Направление:" и лишние пробелы вокруг
+            return String(specText).replace(/^Направления?\s*:\s*/i, '').trim();
+        }
+
+        // Автоматическое заполнение выпадающего списка уникальными направлениями
+        function populateSpecDropdown() {
+            const specFilter = document.getElementById('specFilter');
+            const uniqueSpecs = new Set();
+
+            peopleData.forEach(person => {
+                const rawSpec = person.Specialization || person['Specialization'];
+                if (rawSpec) {
+                    uniqueSpecs.add(cleanSpecialization(rawSpec));
+                }
+            });
+
+            // Сортируем направления по алфавиту и добавляем в Dropdown
+            Array.from(uniqueSpecs).sort().forEach(spec => {
+                const option = document.createElement('option');
+                option.value = spec;
+                option.textContent = spec;
+                specFilter.appendChild(option);
+            });
+        }
+
+        // Вспомогательная функция извлечения 4-значного года рождения
+        function extractYear(dateString) {
+            if (!dateString) return null;
+            const match = String(dateString).match(/\b\d{4}\b/);
+            return match ? parseInt(match[0], 10) : null;
+        }
+
+        // Вспомогательная функция получения первого предложения
+        function getFirstSentence(bio) {
+            if (!bio) return "Биография отсутствует.";
+            let cleanBio = String(bio).replace(/^[\s.]+/, '');
+            let sentenceEnd = cleanBio.search(/(?<=[.!?])\s+/);
+            if (sentenceEnd !== -1) {
+                return cleanBio.substring(0, sentenceEnd + 1);
+            }
+            return cleanBio.length > 120 ? cleanBio.substring(0, 120) + '...' : cleanBio;
+        }
+
+        // Фильтрация и отрисовка данных
+        function renderAnniversaries() {
+            const yearInput = document.getElementById('yearInput');
+            const specFilter = document.getElementById('specFilter');
+            const resultsGrid = document.getElementById('resultsGrid');
+            const noResults = document.getElementById('noResults');
+            const statsCount = document.getElementById('statsCount');
+            
+            const targetYear = parseInt(yearInput.value, 10) || 2026;
+            const selectedSpec = specFilter.value;
+            
+            resultsGrid.innerHTML = '';
+            let matchCount = 0;
+
+            peopleData.forEach(person => {
+                const birthDateText = person.BirthDate || person['BirthDate'] || '';
+                const birthYear = extractYear(birthDateText); 
+                if (!birthYear) return;
+
+                const age = targetYear - birthYear;
+                const rawSpec = person.Specialization || person['Specialization'] || '';
+                const cleanSpec = cleanSpecialization(rawSpec);
+
+                // Проверка условий: Юбилей кратен 5/0 И (выбраны "Все" ИЛИ совпадает специализация)
+                if (age > 0 && age % 5 === 0) {
+                    if (selectedSpec === 'all' || cleanSpec === selectedSpec) {
+                        matchCount++;
+                        const firstSentence = getFirstSentence(person.Biography || person['Biography']);
+                        const personName = person.Name || person['Name'] || 'Имя неизвестно';
+                        const profileUrl = person.URL || person['URL'] || '#';
+                        
+                        const card = document.createElement('div');
+                        card.className = "card bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between";
+                        
+                        card.innerHTML = `
+                            <div>
+                                <div class="flex justify-between items-start mb-3 gap-2">
+                                    <span class="bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded text-sm tracking-wide whitespace-nowrap">
+                                        Юбилей: ${age} лет
+                                    </span>
+                                    <span class="text-xs text-gray-500 font-semibold bg-gray-100 px-2 py-1 rounded max-w-[150px] truncate" title="${cleanSpec}">
+                                        ${cleanSpec}
+                                    </span>
+                                </div>
+                                <h3 class="text-lg font-bold text-gray-900 mb-1">${personName}</h3>
+                                
+                                <div class="text-xs text-slate-400 font-medium mb-3 flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                    <span>${birthDateText}</span>
+                                </div>
+                                
+                                <p class="text-sm text-gray-600 mb-4 line-clamp-3">${firstSentence}</p>
+                            </div>
+                            <div class="pt-4 border-t border-gray-100 mt-auto">
+                                <a href="${profileUrl}" target="_blank" class="text-sm font-semibold text-blue-600 hover:text-blue-800 inline-flex items-center gap-1">
+                                    Подробнее 
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                </a>
+                            </div>
+                        `;
+                        resultsGrid.appendChild(card);
+                    }
+                }
+            });
+
+            statsCount.textContent = `Найдено юбиляров: ${matchCount} (всего в базе: ${peopleData.length})`;
+            
+            if (matchCount === 0) {
+                noResults.classList.remove('hidden');
+            } else {
+                noResults.classList.add('hidden');
+            }
+        }
+
+        // Запуск при загрузке страницы
+        window.addEventListener('DOMContentLoaded', loadExcelData);
+    </script>
+</body>
+</html>
